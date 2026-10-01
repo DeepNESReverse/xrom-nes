@@ -65,6 +65,13 @@ export function writeCollection(dir: string, info: TrackInfo, notes: readonly De
   }
   pitched.sort((a, b) => a[1] - b[1] || a[3] - b[3]);
   drums.sort((a, b) => a[1] - b[1]);
+  const voiced = [0, 1, 2].flatMap((ch) => oneAtATime(pitched.filter((r) => r[3] === ch)));
+  voiced.sort((a, b) => a[1] - b[1] || a[3] - b[3]);
+  pitched.length = 0;
+  pitched.push(...voiced);
+  const hits = oneAtATime(drums);
+  drums.length = 0;
+  drums.push(...hits);
 
   const totalTicks = tick(seconds);
   const events = (ch: number) => (ch === 3 ? drums.length : pitched.filter((r) => r[3] === ch).length);
@@ -107,4 +114,29 @@ export function writeCollection(dir: string, info: TrackInfo, notes: readonly De
   index.tracks.sort((a: { id: number }, b: { id: number }) => a.id - b.id);
   writeFileSync(indexPath, JSON.stringify(index, null, 1));
   return { pitched: pitched.length, drums: drums.length, bends: bends.length };
+}
+
+/**
+ * One voice, one note at a time, on the tick grid.
+ *
+ * Rounding to ticks can land two notes of one voice on the same tick — a
+ * frame-long splinter before the real note, or two quick arpeggio steps — and
+ * a voice's notes can overlap by a tick. The roll draws them by time and does
+ * not mind; the score writes a voice's notes one after another, so every such
+ * pair added a beat, and Alien 3's score ran a whole bar ahead of the sound by
+ * bar 24. Here the longest note of a tick stays (the real one, not the
+ * splinter), and each note ends where the next begins.
+ */
+function oneAtATime(rows: number[][]): number[][] {
+  const out: number[][] = [];
+  for (const row of rows) {
+    const last = out[out.length - 1];
+    if (last && last[1] === row[1]) {
+      if (row[2] > last[2]) out[out.length - 1] = row;
+      continue;
+    }
+    if (last && last[1] + last[2] > row[1]) last[2] = row[1] - last[1];
+    out.push(row);
+  }
+  return out;
 }
