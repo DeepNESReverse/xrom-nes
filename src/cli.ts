@@ -20,6 +20,7 @@
  *               key for the signature (F = one flat).
  * --key-change  a later signature, `bar:key`, comma-separated (45:C = no signs
  *               from bar 45).
+ * --composer    who wrote it, for the score's heading.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -108,6 +109,7 @@ const reading = {
   ...(meter ? { measureTicks: (64 / Number(meter.split('/')[1])) * Number(meter.split('/')[0]) } : {}),
   ...(opt('key') ? { keyName: opt('key') } : {}),
   ...(opt('key-signature') ? { keySignature: opt('key-signature') } : {}),
+  ...(opt('composer') ? { composer: opt('composer') } : {}),
 };
 const measureTicks = (reading as { measureTicks?: number }).measureTicks ?? 64;
 const changes = (opt('key-change') ?? '').split(',').filter(Boolean).map((change) => {
