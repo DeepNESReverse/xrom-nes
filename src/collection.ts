@@ -17,6 +17,18 @@ export interface TrackInfo {
   slug: string;
   name: string;
   source: string;
+  /**
+   * How the score is read — always written, even empty: a track that carries a
+   * reading is never read through the workshop's Battletoads tables.
+   */
+  reading: {
+    barOffset?: number;
+    measureTicks?: number;
+    mergePickup?: boolean;
+    keyName?: string;
+    keySignature?: string;
+    composer?: string;
+  };
 }
 
 export function writeCollection(dir: string, info: TrackInfo, notes: readonly DecodedNote[], seconds: number, grid: Grid, frameHz = 60.0988) {
@@ -66,6 +78,7 @@ export function writeCollection(dir: string, info: TrackInfo, notes: readonly De
     totalTicks,
     seconds,
     loop: null,
+    reading: info.reading,
     rom: { start: 0, end: 0 },
     bends,
     channels: ['pulse1', 'pulse2', 'triangle', 'noise'].map((name, channel) => ({
@@ -90,7 +103,7 @@ export function writeCollection(dir: string, info: TrackInfo, notes: readonly De
     ? JSON.parse(readFileSync(indexPath, 'utf8'))
     : { apu: { cpuHz: CPU_HZ, noisePeriods: [...NOISE_PERIODS] }, rom: null, source: info.source, tracks: [] };
   index.tracks = index.tracks.filter((t: { id: number }) => t.id !== info.id);
-  index.tracks.push({ id: info.id, slug: info.slug, name: info.name, musicSpeed: 256, bpm, seconds, events: pitched.length + drums.length });
+  index.tracks.push({ id: info.id, slug: info.slug, name: info.name, reading: info.reading, musicSpeed: 256, bpm, seconds, events: pitched.length + drums.length });
   index.tracks.sort((a: { id: number }, b: { id: number }) => a.id - b.id);
   writeFileSync(indexPath, JSON.stringify(index, null, 1));
   return { pitched: pitched.length, drums: drums.length, bends: bends.length };

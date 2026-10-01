@@ -11,6 +11,13 @@
  *           a title screen or into a level. Buttons: A B select start up down
  *           left right.
  * --skip    seconds of music to skip after the first note (to start later).
+ *
+ * The score's reading, by ear (all optional):
+ * --bar-offset  ticks (16 to the quarter) from the first note to the first bar
+ *               line; the notes before it are the pickup. 2 = a thirty-second.
+ * --meter       4/4 (default), 2/4, 3/4…
+ * --key         its name for the track list (Dm); --key-signature the VexFlow
+ *               key for the signature (F = one flat).
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -93,9 +100,16 @@ console.log(
 const out = opt('out') ?? join('/Users/alex.m/battletoads_mega_hack copy/battletoads-tools-next/public/tracks', slug, 'notes');
 const name = opt('name') ?? `${basename(rom).replace(/\s*\(.*$/, '').replace(/\.nes$/i, '')} — title`;
 const id = Number(opt('id') ?? 1);
+const meter = opt('meter');
+const reading = {
+  ...(opt('bar-offset') ? { barOffset: Number(opt('bar-offset')) } : {}),
+  ...(meter ? { measureTicks: (64 / Number(meter.split('/')[1])) * Number(meter.split('/')[0]) } : {}),
+  ...(opt('key') ? { keyName: opt('key') } : {}),
+  ...(opt('key-signature') ? { keySignature: opt('key-signature') } : {}),
+};
 const written = writeCollection(
   out,
-  { id, slug: `${String(id).padStart(2, '0')}_${opt('track') ?? 'title'}`, name, source: `${basename(rom)}, recorded headless and decoded from the sound chip — local research` },
+  { id, slug: `${String(id).padStart(2, '0')}_${opt('track') ?? 'title'}`, name, reading, source: `${basename(rom)}, recorded headless and decoded from the sound chip — local research` },
   notes,
   seconds,
   grid,
