@@ -1,0 +1,21 @@
+{
+  "name": "@xromdev/nes-music",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Any NES cartridge's music as notes: run it headless, read the sound chip, decode. Local research tool.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "notes": "node --experimental-strip-types --no-warnings src/cli.ts"
+  },
+  "dependencies": {
+    "@xromdev/apu": "^0.1.1",
+    "@xromdev/cpu6502": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
