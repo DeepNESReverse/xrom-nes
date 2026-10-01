@@ -18,6 +18,8 @@
  * --meter       4/4 (default), 2/4, 3/4…
  * --key         its name for the track list (Dm); --key-signature the VexFlow
  *               key for the signature (F = one flat).
+ * --key-change  a later signature, `bar:key`, comma-separated (45:C = no signs
+ *               from bar 45).
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -107,6 +109,12 @@ const reading = {
   ...(opt('key') ? { keyName: opt('key') } : {}),
   ...(opt('key-signature') ? { keySignature: opt('key-signature') } : {}),
 };
+const measureTicks = (reading as { measureTicks?: number }).measureTicks ?? 64;
+const changes = (opt('key-change') ?? '').split(',').filter(Boolean).map((change) => {
+  const [bar, key] = change.split(':');
+  return { tick: ((reading as { barOffset?: number }).barOffset ?? 0) + (Number(bar) - 1) * measureTicks, key };
+});
+if (changes.length) Object.assign(reading, { keyChanges: changes });
 const written = writeCollection(
   out,
   { id, slug: `${String(id).padStart(2, '0')}_${opt('track') ?? 'title'}`, name, reading, source: `${basename(rom)}, recorded headless and decoded from the sound chip — local research` },

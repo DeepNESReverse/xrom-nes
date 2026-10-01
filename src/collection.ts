@@ -27,6 +27,7 @@ export interface TrackInfo {
     mergePickup?: boolean;
     keyName?: string;
     keySignature?: string;
+    keyChanges?: { tick: number; key: string }[];
     composer?: string;
   };
 }
