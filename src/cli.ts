@@ -93,7 +93,10 @@ const before = writes.filter((w) => w.time < 0).map((w) => ({ ...w, time: 0 }));
 const after = writes.filter((w) => w.time >= 0);
 let notes = decode([...before, ...after], skip + seconds, frameHz);
 const firstNote = Math.min(...notes.map((n) => n.start));
-const from = Math.floor((firstNote + skip) * frameHz) / frameHz;
+// From the first note itself, not the console frame it falls in: the driver writes
+// 97% of the way through a frame, and a start floored to the frame put every note
+// 0.97 frame late — a whole tick once a tick is 1.125 frames.
+const from = firstNote + skip;
 notes = notes
   .filter((n) => n.start >= from && n.start < from + seconds)
   .map((n) => ({ ...n, start: n.start - from }));

@@ -50,9 +50,30 @@ export function writeCollection(dir: string, info: TrackInfo, notes: readonly De
     return bendIndex.get(key)!;
   };
 
+  /*
+   * A gap of a frame or less before the next note of the same voice is the
+   * driver letting go to strike again, not a rest: Alien 3 ends every held note
+   * a frame early — an A5 of 35 frames before the next at 36 — and on a tick
+   * of 1.125 frames each of those was a sixty-fourth rest. The note keeps on
+   * up to the next one.
+   */
+  // A frame and a half: the decoder's windows are whole samples, so a frame of silence measures a hair over a frame.
+  const GAP = 1.5 / frameHz;
+  const byTrack = new Map<string, DecodedNote[]>();
+  for (const n of notes) byTrack.set(n.track, [...(byTrack.get(n.track) ?? []), n]);
+  const legato: DecodedNote[] = [];
+  for (const list of byTrack.values()) {
+    const ordered = [...list].sort((a, b) => a.start - b.start);
+    ordered.forEach((n, i) => {
+      const next = ordered[i + 1];
+      const gap = next ? next.start - (n.start + n.duration) : Infinity;
+      legato.push(gap > 0 && gap <= GAP ? { ...n, duration: next.start - n.start } : n);
+    });
+  }
+
   const pitched: number[][] = [];
   const drums: number[][] = [];
-  for (const n of notes) {
+  for (const n of legato) {
     const start = tick(n.start);
     const ticks = Math.max(1, tick(n.start + n.duration) - start);
     if (n.track === 'noise') {
