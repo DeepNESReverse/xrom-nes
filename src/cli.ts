@@ -21,6 +21,11 @@
  * --key-change  a later signature, `bar:key`, comma-separated (45:C = no signs
  *               from bar 45).
  * --composer    who wrote it, for the score's heading.
+ *
+ * A passage on its own, to work on (bars counted as the score counts them):
+ * --from-bar    the first bar to keep, from 1; --bars how many (default 1).
+ *               The notes are moved to start the piece; the reading's key at
+ *               that bar becomes its key.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -100,6 +105,26 @@ console.log(
   `music from frame ${firstFrame} (${(firstFrame / frameHz).toFixed(1)} s); ${notes.length} notes; row ${grid.rowFrames} frames, sixteenth ${grid.sixteenthFrames} frames → ♩ = ${grid.bpm.toFixed(2)}`
 );
 
+// --from-bar: keep only those bars, moved to the start.
+const fromBar = opt('from-bar') ? Number(opt('from-bar')) : 0;
+let length = seconds;
+if (fromBar > 0) {
+  const meterOf = opt('meter');
+  const barTicks = meterOf ? (64 / Number(meterOf.split('/')[1])) * Number(meterOf.split('/')[0]) : 64;
+  const spt = grid.sixteenthFrames / 4 / frameHz;
+  const offset = Number(opt('bar-offset') ?? 0);
+  const startTick = offset + (fromBar - 1) * barTicks;
+  const endTick = startTick + Number(opt('bars') ?? 1) * barTicks;
+  // Half a tick of slack each way, so a note the grid puts on the bar line is kept with it.
+  const begin = (startTick - 0.5) * spt;
+  const end = (endTick - 0.5) * spt;
+  notes = notes
+    .filter((n) => n.start >= begin && n.start < end)
+    .map((n) => ({ ...n, start: n.start - startTick * spt, duration: Math.min(n.duration, end - n.start) }));
+  length = (endTick - startTick) * spt;
+  console.log(`bars ${fromBar}..${fromBar + Number(opt('bars') ?? 1) - 1}: ticks ${startTick}..${endTick}, ${notes.length} notes`);
+}
+
 const out = opt('out') ?? join('/Users/alex.m/battletoads_mega_hack copy/battletoads-tools-next/public/tracks', slug, 'notes');
 const name = opt('name') ?? `${basename(rom).replace(/\s*\(.*$/, '').replace(/\.nes$/i, '')} — title`;
 const id = Number(opt('id') ?? 1);
@@ -116,12 +141,22 @@ const changes = (opt('key-change') ?? '').split(',').filter(Boolean).map((change
   const [bar, key] = change.split(':');
   return { tick: ((reading as { barOffset?: number }).barOffset ?? 0) + (Number(bar) - 1) * measureTicks, key };
 });
+if (fromBar > 0) {
+  // The key in force at the first bar kept is the passage's key; later changes move with it.
+  const startTick = ((reading as { barOffset?: number }).barOffset ?? 0) + (fromBar - 1) * measureTicks;
+  const before = changes.filter((c) => c.tick <= startTick);
+  if (before.length) Object.assign(reading, { keySignature: before[before.length - 1].key });
+  const later = changes.filter((c) => c.tick > startTick && c.tick < startTick + Number(opt('bars') ?? 1) * measureTicks).map((c) => ({ ...c, tick: c.tick - startTick }));
+  changes.length = 0;
+  changes.push(...later);
+  delete (reading as { barOffset?: number }).barOffset;
+}
 if (changes.length) Object.assign(reading, { keyChanges: changes });
 const written = writeCollection(
   out,
   { id, slug: `${String(id).padStart(2, '0')}_${opt('track') ?? 'title'}`, name, reading, source: `${basename(rom)}, recorded headless and decoded from the sound chip — local research` },
   notes,
-  seconds,
+  length,
   grid,
   frameHz
 );
