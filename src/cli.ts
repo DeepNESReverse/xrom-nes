@@ -15,7 +15,7 @@
  * The score's reading, by ear (all optional):
  * --bar-offset  ticks (16 to the quarter) from the first note to the first bar
  *               line; the notes before it are the pickup. 2 = a thirty-second.
- * --meter       4/4 (default), 2/4, 3/4…
+ * --meter       4/4 (default), 2/4, 3/4, 4/2… — the bar's length and the beat it is counted in
  * --key         its name for the track list (Dm); --key-signature the VexFlow
  *               key for the signature (F = one flat).
  * --key-change  a later signature, `bar:key`, comma-separated (45:C = no signs
@@ -142,7 +142,7 @@ const id = Number(opt('id') ?? 1);
 const meter = opt('meter');
 const reading = {
   ...(opt('bar-offset') ? { barOffset: Number(opt('bar-offset')) } : {}),
-  ...(meter ? { measureTicks: (64 / Number(meter.split('/')[1])) * Number(meter.split('/')[0]) } : {}),
+  ...(meter ? { measureTicks: (64 / Number(meter.split('/')[1])) * Number(meter.split('/')[0]), beatValue: Number(meter.split('/')[1]) } : {}),
   ...(opt('key') ? { keyName: opt('key') } : {}),
   ...(opt('key-signature') ? { keySignature: opt('key-signature') } : {}),
   ...(opt('composer') ? { composer: opt('composer') } : {}),
