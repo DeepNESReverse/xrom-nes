@@ -24,6 +24,9 @@
  *
  * A passage on its own, to work on (bars counted as the score counts them):
  * --from-bar    the first bar to keep, from 1; --bars how many (default 1).
+ *               Fractions cut inside a bar: 8.5 starts half way through bar 8,
+ *               and the bar line stays where it was — the half bar becomes a
+ *               pickup. A note already sounding at the cut starts there.
  *               The notes are moved to start the piece; the reading's key at
  *               that bar becomes its key.
  */
@@ -118,11 +121,16 @@ if (fromBar > 0) {
   // Half a tick of slack each way, so a note the grid puts on the bar line is kept with it.
   const begin = (startTick - 0.5) * spt;
   const end = (endTick - 0.5) * spt;
+  const cut = startTick * spt;
   notes = notes
-    .filter((n) => n.start >= begin && n.start < end)
-    .map((n) => ({ ...n, start: n.start - startTick * spt, duration: Math.min(n.duration, end - n.start) }));
+    .filter((n) => n.start < end && (n.start >= begin || n.start + n.duration > cut + spt / 2))
+    .map((n) => {
+      // Sounding through the cut: from the cut on.
+      const from = Math.max(n.start, cut);
+      return { ...n, start: from - cut, duration: Math.min(n.start + n.duration, end) - from };
+    });
   length = (endTick - startTick) * spt;
-  console.log(`bars ${fromBar}..${fromBar + Number(opt('bars') ?? 1) - 1}: ticks ${startTick}..${endTick}, ${notes.length} notes`);
+  console.log(`bars from ${fromBar}, ${Number(opt('bars') ?? 1)} long: ticks ${startTick}..${endTick}, ${notes.length} notes`);
 }
 
 const out = opt('out') ?? join('/Users/alex.m/battletoads_mega_hack copy/battletoads-tools-next/public/tracks', slug, 'notes');
@@ -149,7 +157,10 @@ if (fromBar > 0) {
   const later = changes.filter((c) => c.tick > startTick && c.tick < startTick + Number(opt('bars') ?? 1) * measureTicks).map((c) => ({ ...c, tick: c.tick - startTick }));
   changes.length = 0;
   changes.push(...later);
-  delete (reading as { barOffset?: number }).barOffset;
+  // Where the first bar line falls in the passage: none cut, at its start.
+  const pickup = (((-(fromBar - 1) * measureTicks) % measureTicks) + measureTicks) % measureTicks;
+  if (pickup > 0) Object.assign(reading, { barOffset: pickup });
+  else delete (reading as { barOffset?: number }).barOffset;
 }
 if (changes.length) Object.assign(reading, { keyChanges: changes });
 const written = writeCollection(
