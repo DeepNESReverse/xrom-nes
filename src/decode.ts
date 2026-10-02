@@ -248,11 +248,16 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
        * semitones drawn down from it.
        */
       if (ch === 2 && o && o.frames < TRIANGLE_KICK_FRAMES && pitch < o.last - 0.5) {
+        // The note is the pitch the fall lands on; the fall stays in its curve,
+        // so it is still heard — measured from the new pitch, it ends at 0 and no
+        // score draws it.
+        const shift = o.pitch - pitch;
+        o.bend = o.bend.map(([t, semis]): [number, number] => [t, semis + shift]);
+        o.bend.push([time, 0]);
         o.midi = Math.round(pitch);
         o.pitch = pitch;
         o.last = pitch;
         o.frames++;
-        o.bend = [[o.start, 0]];
         continue;
       }
       if (o && !restart && !jumped) {
@@ -308,12 +313,18 @@ function strikesOntoNotes(notes: DecodedNote[], frameHz: number): DecodedNote[] 
     const gap = (note.start - strike.start - strike.duration) * frameHz;
     if (frames > TRIANGLE_STRIKE_FRAMES || Math.abs(gap) > 0.5 || note.duration <= strike.duration) continue;
     gone.add(strike);
-    const merged = { ...note, start: strike.start, duration: note.start + note.duration - strike.start };
-    if (note.bend) {
-      // The curve was measured over the note alone; it now starts later in a longer note.
-      const share = note.duration / merged.duration;
-      merged.bend = [[0, 0], ...note.bend.map(([p, semis]): [number, number] => [1 - share + p * share, semis])];
-    }
+    const merged: DecodedNote = { ...note, start: strike.start, duration: note.start + note.duration - strike.start };
+    // The strike stays in the sound as the start of the note's curve: its pitch,
+    // measured from the note's, for its frames; then the note's own curve, if any.
+    const struck = strike.duration / merged.duration;
+    const from = strike.pitch - note.pitch;
+    const head: [number, number][] = strike.bend
+      ? strike.bend.slice(0, -1).map(([p, semis]): [number, number] => [p * struck, semis + from])
+      : [[0, from]];
+    const tail: [number, number][] = note.bend
+      ? note.bend.map(([p, semis]): [number, number] => [struck + p * (1 - struck), semis])
+      : [[struck, 0], [1, 0]];
+    merged.bend = [...head, ...tail];
     out.set(note, merged);
     tri[i + 1] = merged;
   }
