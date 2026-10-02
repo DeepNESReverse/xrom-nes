@@ -13,6 +13,16 @@
  * A glide stays one note, its pitch curve kept as the bend. On the triangle a
  * jump within a note's first frames is part of its attack — a kick drum played
  * as a quick fall in pitch — and stays one note too.
+ *
+ * A "frame" here starts where the DRIVER updates the chip, not where the
+ * console's frame does: `driverPhase`. A game updates its sound in the vblank
+ * interrupt, 97% of the way through the console's frame — Alien 3 writes at
+ * cycle 28 937 of 29 781 — and a window cut at the console's frame edge held
+ * one update's pitch (read at its end) and the previous update's level (read
+ * through it). Bar 9 of Alien 3 opened on an F#4 that never sounds: the
+ * driver writes it at volume 0, a frame of silence, and the window lent it the
+ * volume 2 the frame before had. An NSF player calls the driver at the start
+ * of its frame, and there the two always agreed — which is how it was found.
  */
 
 import { Apu, type ChannelBuffers } from '@xromdev/apu';
@@ -66,10 +76,54 @@ interface Open {
   bend: [number, number][];
 }
 
+/**
+ * Where in its frame the driver starts writing the chip, in samples at `rate`,
+ * from 0.
+ *
+ * The earliest place of the busiest stretch: offsets of the channel registers'
+ * writes into the frame, binned, and the window that holds most of them taken
+ * from the first write in it — so a whole update falls at the start of a
+ * window. `$4010`–`$4013` are left out: a driver that streams samples writes
+ * those all through the frame.
+ */
+export function driverPhase(writes: readonly TimedWrite[], perFrame: number, rate: number): number {
+  const BINS = 64;
+  const bins = new Array<number>(BINS).fill(0);
+  const offsets: number[] = [];
+  for (const w of writes) {
+    if (w.address > 0x400f || w.time <= 0) continue;
+    const at = (((w.time * rate) % perFrame) + perFrame) % perFrame;
+    offsets.push(at);
+    bins[Math.floor((at / perFrame) * BINS) % BINS]++;
+  }
+  if (offsets.length === 0) return 0;
+  // The busiest pair of neighbouring bins, so an update split by a bin edge still counts as one.
+  let best = 0;
+  for (let b = 1; b < BINS; b++) if (bins[b] + bins[(b + 1) % BINS] > bins[best] + bins[(best + 1) % BINS]) best = b;
+  const from = (best / BINS) * perFrame;
+  const to = from + (2 / BINS) * perFrame;
+  let first = Infinity;
+  for (const at of offsets) {
+    const a = at < from ? at + perFrame : at;
+    if (a >= from && a < to && a < first) first = a;
+  }
+  return Math.floor(first % perFrame);
+}
+
+/**
+ * How far into a window the driver's update may still be running, as a share
+ * of the window: levels are read only after the last write that falls in it.
+ * The update takes a few samples, and a peak read from the window's first
+ * sample found the level the update was about to replace — Alien 3's silent
+ * F#4 came back with volume 2.
+ */
+const UPDATE_SHARE = 1 / 8;
+
 export function decode(writes: readonly TimedWrite[], seconds: number, frameHz = 60.0988): DecodedNote[] {
   const rate = 88200;
   const apu = new Apu(rate);
   const perFrame = rate / frameHz;
+  const phase = driverPhase(writes, perFrame, rate);
   const size = Math.ceil(perFrame) + 2;
   const levels: ChannelBuffers = {
     pulse1: new Uint8Array(size),
@@ -108,14 +162,19 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
   let wi = 0;
   let done = 0;
   const end = Math.round(seconds * rate);
-  for (let frame = 0; done < end; frame++) {
-    const next = Math.min(end, Math.round((frame + 1) * perFrame));
+  // Windows from one driver update to the next; the first runs from 0 to the first update.
+  for (let frame = phase > 0 ? -1 : 0; done < end; frame++) {
+    const next = Math.min(end, Math.round((frame + 1) * perFrame + phase));
     const restarted = [false, false, false, false];
     let at = done;
+    /** The window's first sample after the driver's update — where its levels are read from. */
+    let settled = 0;
+    const updateEnd = done + (next - done) * UPDATE_SHARE;
     while (at < next) {
       while (wi < writes.length && writes[wi].time * rate <= at) {
         const w = writes[wi++];
         apu.write(w.address, w.value);
+        if (w.address <= 0x400f && at <= updateEnd) settled = Math.max(settled, at - done);
         const c = RESTART.indexOf(w.address);
         if (c >= 0) restarted[c] = true;
       }
@@ -130,12 +189,12 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
     let nz = 0;
     let triMoved = false;
     const tri0 = levels.triangle[0];
-    for (let k = 0; k < count; k++) {
+    for (let k = settled; k < count; k++) {
       if (levels.pulse1[k] > p1) p1 = levels.pulse1[k];
       if (levels.pulse2[k] > p2) p2 = levels.pulse2[k];
       if (levels.noise[k] > nz) nz = levels.noise[k];
-      if (levels.triangle[k] !== tri0) triMoved = true;
     }
+    for (let k = 0; k < count; k++) if (levels.triangle[k] !== tri0) triMoved = true;
     const pulse = (i: number, peak: number): [boolean, number] => {
       const period = s.pulse[i].period;
       const on = peak > 0 && period >= 8;
