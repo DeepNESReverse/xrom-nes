@@ -62,6 +62,12 @@ const midiOf = (hz: number) => 69 + 12 * Math.log2(hz / 440);
 export const noiseKey = (periodIndex: number) => 96 - periodIndex;
 /** Frames at the start of a triangle note a pitch jump counts as its attack. */
 const TRIANGLE_ATTACK_FRAMES = 3;
+/**
+ * Frames a falling attack may take before the note it lands on. Alien 3's kick
+ * is C#4, A3, F#3 a frame each; under an F#2 it falls on one more frame, and at
+ * three that last step was cut off as a note of three frames.
+ */
+const TRIANGLE_KICK_FRAMES = 4;
 
 interface Open {
   midi: number;
@@ -188,13 +194,22 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
     let p2 = 0;
     let nz = 0;
     let triMoved = false;
-    const tri0 = levels.triangle[0];
     for (let k = settled; k < count; k++) {
       if (levels.pulse1[k] > p1) p1 = levels.pulse1[k];
       if (levels.pulse2[k] > p2) p2 = levels.pulse2[k];
       if (levels.noise[k] > nz) nz = levels.noise[k];
     }
-    for (let k = 0; k < count; k++) if (levels.triangle[k] !== tri0) triMoved = true;
+    /*
+     * Sounding in the second half of the window, not merely at its start. A frame
+     * the driver silences with `$4008` = $80 does not go quiet at the write: the
+     * chip loads the linear counter on its next quarter-frame clock, and for up to
+     * a quarter of a frame the wave runs on — a click of 4 ms, already at the next
+     * note's pitch, that came out a note a frame long before every bass note of
+     * Alien 3. A real note, however short, sounds through the whole window.
+     */
+    const triFrom = Math.max(settled, Math.floor(count / 2));
+    const triLevel = levels.triangle[triFrom];
+    for (let k = triFrom; k < count; k++) if (levels.triangle[k] !== triLevel) triMoved = true;
     const pulse = (i: number, peak: number): [boolean, number] => {
       const period = s.pulse[i].period;
       const on = peak > 0 && period >= 8;
@@ -224,6 +239,22 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
       // The noise channel's restart register is often rewritten every frame;
       // a new hit there is an attack.
       const restart = ch === 3 ? attack : restarted[ch] || attack;
+      /*
+       * A triangle kick: the pitch falling over a note's first frames, struck
+       * again on the way or not, is the attack of the note it falls ONTO — the
+       * bass is that note, the fall is how it is hit. Alien 3 strikes every bass
+       * note C#4, A3, then F#3 a frame each, restarting on the F#3; read as a
+       * note of its own the C#4 came out a separate head with a slide of four
+       * semitones drawn down from it.
+       */
+      if (ch === 2 && o && o.frames < TRIANGLE_KICK_FRAMES && pitch < o.last - 0.5) {
+        o.midi = Math.round(pitch);
+        o.pitch = pitch;
+        o.last = pitch;
+        o.frames++;
+        o.bend = [[o.start, 0]];
+        continue;
+      }
       if (o && !restart && !jumped) {
         if (ch !== 3) o.bend.push([time, pitch - o.pitch]);
         o.last = pitch;
@@ -249,5 +280,42 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
     done = next;
   }
   for (let ch = 0; ch < 4; ch++) close(ch, done / rate);
-  return notes.filter((n) => n.midi >= 21 && n.midi <= 108);
+  return strikesOntoNotes(notes, frameHz).filter((n) => n.midi >= 21 && n.midi <= 108);
+}
+
+/** The longest a triangle note can be and still be the strike of the note after it, in frames. */
+const TRIANGLE_STRIKE_FRAMES = 3.5;
+
+/**
+ * A triangle note of a few frames running straight into a longer one is how
+ * that longer note is struck — a drum made of pitch — and is written as part of
+ * it: the note starts where the strike did, at the note's own pitch.
+ *
+ * Alien 3 strikes its bass three ways: falling C#4, A3, F#3 or F#3, D3, A#2 a
+ * frame each, or one frame of C1 under it. The falls that land lower are
+ * already one note (see the kick in `decode`); this takes the rest — a fall
+ * followed by a HIGHER note, and the frame of C1 — which came out two hundred
+ * notes of a frame or three on the bass staff.
+ */
+function strikesOntoNotes(notes: DecodedNote[], frameHz: number): DecodedNote[] {
+  const tri = notes.filter((n) => n.track === 'triangle').sort((a, b) => a.start - b.start);
+  const gone = new Set<DecodedNote>();
+  const out = new Map<DecodedNote, DecodedNote>();
+  for (let i = 0; i + 1 < tri.length; i++) {
+    const strike = tri[i], note = tri[i + 1];
+    if (gone.has(strike)) continue;
+    const frames = strike.duration * frameHz;
+    const gap = (note.start - strike.start - strike.duration) * frameHz;
+    if (frames > TRIANGLE_STRIKE_FRAMES || Math.abs(gap) > 0.5 || note.duration <= strike.duration) continue;
+    gone.add(strike);
+    const merged = { ...note, start: strike.start, duration: note.start + note.duration - strike.start };
+    if (note.bend) {
+      // The curve was measured over the note alone; it now starts later in a longer note.
+      const share = note.duration / merged.duration;
+      merged.bend = [[0, 0], ...note.bend.map(([p, semis]): [number, number] => [1 - share + p * share, semis])];
+    }
+    out.set(note, merged);
+    tri[i + 1] = merged;
+  }
+  return notes.filter((n) => !gone.has(n)).map((n) => out.get(n) ?? n);
 }
