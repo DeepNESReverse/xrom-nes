@@ -2,6 +2,12 @@
  * npm run nsf -- <file.nsf> --slug smb [--songs 1,4,7] [--seconds 90]
  *   [--composer "Koji Kondo"] [--out <dir>]
  *
+ * The reading of the songs given with `--songs` (by ear, all optional) — as
+ * `npm run notes` takes them: `--meter 3/4`, `--bar-offset` (ticks, 16 to the
+ * quarter, from the first note to the first bar line), `--key` (its name for the
+ * list), `--key-signature` (VexFlow's), `--key-change bar:key,…`, `--sixteenth`
+ * (frames). Re-run with one song to change just that song.
+ *
  * Every song of an NSF as notes, into one /music collection for the workshop
  * (default: battletoads-tools-next/public/tracks/<slug>/notes) — the same
  * decoding, grid and collection as `npm run notes` takes from a cartridge, but
@@ -72,6 +78,25 @@ function silenceAfter(notes: readonly DecodedNote[], recorded: number): number |
   return recorded - end >= SILENCE ? end : null;
 }
 
+const meter = opt('meter');
+const measureTicks = meter ? (64 / Number(meter.split('/')[1])) * Number(meter.split('/')[0]) : 64;
+const barOffset = Number(opt('bar-offset') ?? 0);
+const reading = {
+  ...(opt('bar-offset') ? { barOffset } : {}),
+  ...(meter ? { measureTicks, beatValue: Number(meter.split('/')[1]) } : {}),
+  ...(opt('key') ? { keyName: opt('key') } : {}),
+  ...(opt('key-signature') ? { keySignature: opt('key-signature') } : {}),
+  ...(composer ? { composer } : {}),
+};
+const keyChanges = (opt('key-change') ?? '')
+  .split(',')
+  .filter(Boolean)
+  .map((change) => {
+    const [bar, key] = change.split(':');
+    return { tick: barOffset + (Number(bar) - 1) * measureTicks, key };
+  });
+if (keyChanges.length) Object.assign(reading, { keyChanges });
+
 for (const song of songs) {
   const hz = info.playHz;
   let notes = decode(record(song, seconds + 1), seconds + 1, hz);
@@ -87,13 +112,17 @@ for (const song of songs) {
     .map((n) => ({ ...n, start: n.start - from, duration: Math.min(n.duration, until - n.start) }));
   const length = until - from;
   const grid = detectGrid(notes, hz);
+  if (opt('sixteenth')) {
+    grid.sixteenthFrames = Number(opt('sixteenth'));
+    grid.bpm = (60 * hz) / (grid.sixteenthFrames * 4);
+  }
   const written = writeCollection(
     out,
     {
       id: song,
       slug: `${String(song).padStart(2, '0')}_song`,
       name: `${info.title} — song ${song}`,
-      reading: composer ? { composer } : {},
+      reading,
       source: `${basename(path)}, played song by song and decoded from the sound chip — local research`,
     },
     notes,
