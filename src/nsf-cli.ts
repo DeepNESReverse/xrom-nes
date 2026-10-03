@@ -97,6 +97,23 @@ const keyChanges = (opt('key-change') ?? '')
   });
 if (keyChanges.length) Object.assign(reading, { keyChanges });
 
+/**
+ * Where the bar lines fall when nobody has said: on the eighth that most notes start on.
+ *
+ * Counted from the song's first sound, Super Mario Bros.' song 4 put every note five ticks after
+ * an eighth — its first sound is not on the beat — and each note that ends a bar was tied over the
+ * bar line. The eighth most of a song's notes start on is its beat; the first bar line is moved
+ * onto it, and what comes before is a pickup.
+ */
+function barLineOf(notes: readonly DecodedNote[], secondsPerTick: number): { barOffset?: number } {
+  const EIGHTH = 8;
+  const counts = new Array<number>(EIGHTH).fill(0);
+  for (const n of notes) counts[((Math.round(n.start / secondsPerTick) % EIGHTH) + EIGHTH) % EIGHTH]++;
+  let phase = 0;
+  for (let p = 1; p < EIGHTH; p++) if (counts[p] > counts[phase]) phase = p;
+  return phase > 0 ? { barOffset: phase } : {};
+}
+
 for (const song of songs) {
   const hz = info.playHz;
   let notes = decode(record(song, seconds + 1), seconds + 1, hz);
@@ -116,13 +133,15 @@ for (const song of songs) {
     grid.sixteenthFrames = Number(opt('sixteenth'));
     grid.bpm = (60 * hz) / (grid.sixteenthFrames * 4);
   }
+  // The bar line where most notes begin, not at the song's first sound — unless given by ear.
+  const own = opt('bar-offset') ? reading : { ...reading, ...barLineOf(notes, grid.sixteenthFrames / 4 / hz) };
   const written = writeCollection(
     out,
     {
       id: song,
       slug: `${String(song).padStart(2, '0')}_song`,
       name: `${info.title} — song ${song}`,
-      reading,
+      reading: own,
       source: `${basename(path)}, played song by song and decoded from the sound chip — local research`,
     },
     notes,
@@ -131,7 +150,7 @@ for (const song of songs) {
     hz
   );
   console.log(
-    `song ${String(song).padStart(2)}: ${length.toFixed(1).padStart(5)} s${quiet !== null ? ' (ends)' : ' (cut) '}  row ${grid.rowFrames}f, sixteenth ${grid.sixteenthFrames}f → ♩ ${grid.bpm.toFixed(1).padStart(6)}  ${written.pitched} notes, ${written.drums} drums`
+    `song ${String(song).padStart(2)}: ${length.toFixed(1).padStart(5)} s${quiet !== null ? ' (ends)' : ' (cut) '}  row ${grid.rowFrames}f, sixteenth ${grid.sixteenthFrames}f → ♩ ${grid.bpm.toFixed(1).padStart(6)}  ${written.pitched} notes, ${written.drums} drums${own.barOffset ? `, bar line ${own.barOffset} ticks in` : ''}`
   );
 }
 console.log(`→ ${out}`);
