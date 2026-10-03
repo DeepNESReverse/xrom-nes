@@ -7,11 +7,13 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
-    "notes": "node --experimental-strip-types --no-warnings src/cli.ts"
+    "notes": "node --experimental-strip-types --no-warnings src/cli.ts",
+    "nsf": "node --experimental-strip-types --no-warnings src/nsf-cli.ts"
   },
   "dependencies": {
     "@xromdev/apu": "^0.1.1",
-    "@xromdev/cpu6502": "^0.1.0"
+    "@xromdev/cpu6502": "^0.1.0",
+    "@xromdev/nsf": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",
