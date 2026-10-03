@@ -9,6 +9,14 @@ import { NOISE_PERIODS } from '@xromdev/apu';
 import { CPU_HZ } from './nes.ts';
 import type { DecodedNote } from './decode.ts';
 import type { Grid } from './grid.ts';
+import { KIND_LANE, type DmcHit, type DrumKind } from './dmc.ts';
+
+/** A DMC sample a collection carries: its bytes, where the DMC reads them, and what drum it is. */
+export interface CollectedSample {
+  address: number;
+  bytes: number[];
+  kind: DrumKind;
+}
 
 const CHANNEL = { pulse1: 0, pulse2: 1, triangle: 2 } as const;
 
@@ -32,7 +40,16 @@ export interface TrackInfo {
   };
 }
 
-export function writeCollection(dir: string, info: TrackInfo, notes: readonly DecodedNote[], seconds: number, grid: Grid, frameHz = 60.0988) {
+export function writeCollection(
+  dir: string,
+  info: TrackInfo,
+  notes: readonly DecodedNote[],
+  seconds: number,
+  grid: Grid,
+  frameHz = 60.0988,
+  /** The DMC's hits and the samples they play, when the music uses it. */
+  dmc?: { hits: readonly DmcHit[]; samples: readonly CollectedSample[] }
+) {
   // The workshop counts 16 ticks to the quarter: a tick is a quarter of the sixteenth.
   const spt = grid.sixteenthFrames / 4 / frameHz;
   const tick = (t: number) => Math.round(t / spt);
@@ -123,6 +140,20 @@ export function writeCollection(dir: string, info: TrackInfo, notes: readonly De
     })),
     pitched,
     drums,
+    ...(dmc && dmc.hits.length
+      ? {
+          /** `[sampleIndex, tick, ticks, rate, loop, level]` — samples struck on the DMC (`SampleRow`). */
+          hits: dmc.hits
+            .map((hit) => {
+              const index = dmc.samples.findIndex((sample) => sample.address === hit.address && sample.bytes.length === hit.length);
+              const start = tick(hit.start);
+              return [index, start, Math.max(1, tick(hit.start + hit.duration) - start), hit.rate, hit.loop ? 1 : 0, hit.level];
+            })
+            .filter((row) => row[0] >= 0),
+          /** The samples, each with the noise rate whose line its drum stands on. */
+          samples: dmc.samples.map((sample) => ({ ...sample, lane: KIND_LANE[sample.kind] })),
+        }
+      : {}),
   };
 
   mkdirSync(dir, { recursive: true });
