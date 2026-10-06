@@ -88,6 +88,24 @@ export function writeCollection(
     });
   }
 
+  /*
+   * Level curves, shared like the bends: `[position 0..1, level]` at each change of level. A row
+   * points at one by index in its thirteenth place (`levelIndex`); -1, or a row without one, is the
+   * straight line from its start level to its end level.
+   */
+  const levels: [number, number][][] = [];
+  const levelIndex = new Map<string, number>();
+  const levelOf = (n: DecodedNote) => {
+    if (!n.levels || n.duration <= 0) return -1;
+    const curve = n.levels.map(([t, level]): [number, number] => [Number(Math.min(1, t / n.duration).toFixed(4)), level]);
+    const key = JSON.stringify(curve);
+    if (!levelIndex.has(key)) {
+      levelIndex.set(key, levels.length);
+      levels.push(curve);
+    }
+    return levelIndex.get(key)!;
+  };
+
   const pitched: number[][] = [];
   const drums: number[][] = [];
   for (const n of legato) {
@@ -100,7 +118,11 @@ export function writeCollection(
     const ch = CHANNEL[n.track];
     const hz = 440 * 2 ** ((n.pitch - 69) / 12);
     const period = Math.round(CPU_HZ / ((ch === 2 ? 32 : 16) * hz) - 1);
-    pitched.push([n.midi, start, ticks, ch, ch === 2 ? 12 : n.volume, period, n.duty, ch === 2 ? 12 : n.volumeEnd, 0, bendOf(n), -1]);
+    const level = ch === 2 ? -1 : levelOf(n);
+    pitched.push([
+      n.midi, start, ticks, ch, ch === 2 ? 12 : n.volume, period, n.duty, ch === 2 ? 12 : n.volumeEnd, 0, bendOf(n), -1,
+      ...(level >= 0 ? [-1, level] : []),
+    ]);
   }
   pitched.sort((a, b) => a[1] - b[1] || a[3] - b[3]);
   drums.sort((a, b) => a[1] - b[1]);
@@ -127,6 +149,7 @@ export function writeCollection(
     reading: info.reading,
     rom: { start: 0, end: 0 },
     bends,
+    ...(levels.length ? { levels } : {}),
     channels: ['pulse1', 'pulse2', 'triangle', 'noise'].map((name, channel) => ({
       channel,
       name,

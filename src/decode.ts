@@ -54,6 +54,13 @@ export interface DecodedNote {
   periodIndex: number;
   /** `[position 0..1, semitones from pitch]`, when the pitch moved. */
   bend?: [number, number][];
+  /**
+   * `[seconds into the note, level 0..15]` at each change of level, when the level does not go in
+   * a straight line from `volume` to `volumeEnd`. Capcom strikes a note at 8 and drops it to 5 the
+   * next frame, then lets it fall slowly: a line from 8 to its last level is far too loud in the
+   * middle, and Darkwing Duck sounded flat for it.
+   */
+  levels?: [number, number][];
 }
 
 const RESTART = [0x4003, 0x4007, 0x400b, 0x400f];
@@ -80,6 +87,8 @@ interface Open {
   duty: number;
   periodIndex: number;
   bend: [number, number][];
+  /** `[time, level]` for every frame of the note. */
+  levels: [number, number][];
 }
 
 /**
@@ -87,9 +96,9 @@ interface Open {
  * from 0.
  *
  * The earliest place of the busiest stretch: offsets of the channel registers'
- * writes into the frame, binned, and the window that holds most of them taken
- * from the first write in it — so a whole update falls at the start of a
- * window. `$4010`–`$4013` are left out: a driver that streams samples writes
+ * writes into the frame, binned, and the run of busy bins around the window that
+ * holds most of them taken from the first write in it — so a whole update falls
+ * at the start of a window. `$4010`–`$4013` are left out: a driver that streams samples writes
  * those all through the frame.
  */
 export function driverPhase(writes: readonly TimedWrite[], perFrame: number, rate: number): number {
@@ -106,8 +115,20 @@ export function driverPhase(writes: readonly TimedWrite[], perFrame: number, rat
   // The busiest pair of neighbouring bins, so an update split by a bin edge still counts as one.
   let best = 0;
   for (let b = 1; b < BINS; b++) if (bins[b] + bins[(b + 1) % BINS] > bins[best] + bins[(best + 1) % BINS]) best = b;
-  const from = (best / BINS) * perFrame;
-  const to = from + (2 / BINS) * perFrame;
+  /*
+   * Back from there to where the update begins: while the bin before is busy too. Capcom's driver
+   * spends a twentieth of a frame on an update — pulse 1, then pulse 2, then the triangle — and the
+   * busiest pair was its middle, so pulse 1's writes fell into the window before: Darkwing Duck,
+   * song 2, came out with pulse 2 and the triangle a frame behind pulse 1, and a one-frame note on
+   * every pitch change, where the new period landed a window ahead of its level.
+   */
+  const busy = Math.max(1, Math.max(...bins) * 0.02);
+  let start = best;
+  for (let step = 0; step < BINS / 2 && bins[(start - 1 + BINS) % BINS] >= busy; step++) {
+    start = (start - 1 + BINS) % BINS;
+  }
+  const from = (start / BINS) * perFrame;
+  const to = from + (((best - start + BINS) % BINS) + 2) / BINS * perFrame;
   let first = Infinity;
   for (const at of offsets) {
     const a = at < from ? at + perFrame : at;
@@ -159,6 +180,15 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
       duty: o.duty,
       periodIndex: o.periodIndex,
     };
+    // The level as it went, where a straight line from the first to the last would not say so.
+    const straight = o.levels.every(
+      ([t, level]) => Math.abs(level - (o.volume + ((o.lastVolume - o.volume) * (t - o.start)) / duration)) <= 1
+    );
+    if (!straight && TRACKS[ch] !== 'triangle') {
+      note.levels = o.levels
+        .filter(([, level], index) => index === 0 || level !== o.levels[index - 1][1])
+        .map(([t, level]): [number, number] => [t - o.start, level]);
+    }
     if (o.bend.some(([, s]) => Math.abs(s) >= 0.1)) {
       note.bend = [...o.bend.map(([t, s]): [number, number] => [(t - o.start) / duration, s]), [1, o.bend[o.bend.length - 1][1]]];
     }
@@ -265,6 +295,7 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
         o.last = pitch;
         o.frames++;
         o.lastVolume = Math.round(ch === 2 ? 12 : peaks[ch]);
+        o.levels.push([time, o.lastVolume]);
         continue;
       }
       close(ch, time);
@@ -280,6 +311,7 @@ export function decode(writes: readonly TimedWrite[], seconds: number, frameHz =
         duty: ch < 2 ? s.pulse[ch].duty : 0,
         periodIndex: s.noise.periodIndex,
         bend: [[time, 0]],
+        levels: [[time, volume]],
       };
     }
     done = next;

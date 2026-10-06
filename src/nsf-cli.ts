@@ -50,7 +50,8 @@ const songs = opt('songs')
   ? opt('songs')!.split(',').map(Number)
   : Array.from({ length: info.songs }, (_, i) => i + 1);
 const out = opt('out') ?? join('/Users/alex.m/battletoads_mega_hack copy/battletoads-tools-next/public/tracks', slug, 'notes');
-const composer = opt('composer') ?? info.artist;
+// An NSF that does not know its composer says `<?>`, which is not a name to print on a score.
+const composer = opt('composer') ?? (/^<\?>$|^\s*$/.test(info.artist) ? undefined : info.artist);
 console.log(`${info.title} — ${info.artist}, ${info.songs} songs, ${info.region} at ${info.playHz.toFixed(3)} Hz${info.expansion.length ? ', expansion ' + info.expansion.join(' ') : ''}`);
 
 /**
