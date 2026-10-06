@@ -112,7 +112,8 @@ export function writeCollection(
     const start = tick(n.start);
     const ticks = Math.max(1, tick(n.start + n.duration) - start);
     if (n.track === 'noise') {
-      drums.push([n.periodIndex, start, ticks, n.volume, n.volumeEnd, 0, -1]);
+      const level = levelOf(n);
+      drums.push([n.periodIndex, start, ticks, n.volume, n.volumeEnd, 0, -1, ...(level >= 0 ? [level] : [])]);
       continue;
     }
     const ch = CHANNEL[n.track];
