@@ -8,7 +8,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "notes": "node --experimental-strip-types --no-warnings src/cli.ts",
-    "nsf": "node --experimental-strip-types --no-warnings src/nsf-cli.ts"
+    "nsf": "node --experimental-strip-types --no-warnings src/nsf-cli.ts",
+    "snap": "node --experimental-strip-types --no-warnings src/snap-cli.ts"
   },
   "dependencies": {
     "@xromdev/apu": "^0.1.1",
