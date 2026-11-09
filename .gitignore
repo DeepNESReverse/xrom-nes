@@ -1,3 +1,4 @@
 node_modules/
 *.nes
 out/
+fceux/sessions/

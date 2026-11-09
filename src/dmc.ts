@@ -39,6 +39,12 @@ export const KIND_LANE: Record<DrumKind, number> = { kick: 15, snare: 7, hat: 1 
 export const sampleSeconds = (length: number, rate: number) =>
   (length * 8 * DMC_PERIODS[rate & 0x0f]) / CPU_HZ;
 
+/**
+ * A start this soon after the last, of the same sample, restarts it before it is heard: Blades of
+ * Steel's driver starts its drum twice in one update, 170 µs apart, and every such hit came out two.
+ */
+const RETRIGGER_SECONDS = 1 / 240;
+
 export function dmcHits(writes: readonly TimedWrite[], until: number): DmcHit[] {
   const hits: DmcHit[] = [];
   let r10 = 0;
@@ -64,11 +70,26 @@ export function dmcHits(writes: readonly TimedWrite[], until: number): DmcHit[] 
       const was = (r15 & 0x10) !== 0;
       const now = (w.value & 0x10) !== 0;
       // A sample that has run out leaves the bit set in the driver's mind; the chip
-      // has stopped it, and setting the bit again starts the next.
-      const finished = open !== null && !open.loop && w.time >= open.start + sampleSeconds(open.length, open.rate);
+      // has stopped it, and setting the bit again starts the next. So does one never
+      // opened (a sample of one byte, below).
+      const finished = open === null || (!open.loop && w.time >= open.start + sampleSeconds(open.length, open.rate));
       if (now && (!was || finished)) {
+        const address = 0xc000 + r12 * 64;
         close(w.time);
-        open = { start: w.time, duration: 0, address: 0xc000 + r12 * 64, length: r13 * 16 + 1, rate: r10 & 0x0f, loop: (r10 & 0x40) !== 0, level: r11 };
+        const last = hits[hits.length - 1];
+        // The `$4011` level loaded before the first start is the hit's.
+        if (last && last.address === address && w.time - last.start < RETRIGGER_SECONDS && hits.pop() && r11 < 0) r11 = last.level;
+        /*
+         * A sample of one byte, not looped, is 8 bits — two milliseconds at the slowest rate — a click
+         * and no drum: INIT enabling the DMC (Arkanoid II, Yuu Maze's songs all open on one at
+         * `$C000`), or a driver setting the bit every frame with `$4013` = 0 (Big Challenge! Dogfight
+         * Spirit came out thousands of kicks). It stops the sample before it, and starts nothing.
+         */
+        if (r13 === 0 && !(r10 & 0x40)) {
+          r15 = w.value;
+          continue;
+        }
+        open = { start: w.time, duration: 0, address, length: r13 * 16 + 1, rate: r10 & 0x0f, loop: (r10 & 0x40) !== 0, level: r11 };
         r11 = -1;
       } else if (!now && was) {
         close(w.time);

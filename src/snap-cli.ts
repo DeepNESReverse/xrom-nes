@@ -7,7 +7,8 @@
  * (`start`, `select`, `a`, `b`, `up`, `down`, `left`, `right`, joined by `+`) for N frames;
  * `shot <name>` saves the last frame as `<name>.png` (×1 and ×3), its layers apart as
  * `<name>-bg.png` and `<name>-sprites.png` (transparent where empty), and `<name>.json` — palette,
- * sprite memory, nametables, CHR — for reading the graphics afterwards; `every N <name>` saves a
+ * sprite memory, nametables, CHR (and, under a mapper that switches CHR, the banks each line was
+ * drawn with) — for reading the graphics afterwards; `every N <name>` saves a
  * frame every N frames from then on, numbered, until the next `every 0`.
  */
 
@@ -25,7 +26,7 @@ if (!rom || !out || !script) {
 mkdirSync(out, { recursive: true });
 const cart = parseRom(new Uint8Array(readFileSync(rom)));
 const nes = new Nes(cart);
-const ppu = new Ppu(cart);
+const ppu = new Ppu(cart, nes.mapper);
 nes.ppu = ppu;
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
@@ -45,6 +46,7 @@ function shot(name: string) {
       oam: hex(s.oam),
       nametables: hex(s.nametables),
       chr: hex(s.chr),
+      ...(s.chrLines ? { chrLines: s.chrLines } : {}),
     })
   );
   console.log(`frame ${nes.frame}: ${name}.png`);

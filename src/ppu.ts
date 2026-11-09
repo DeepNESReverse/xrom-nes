@@ -11,9 +11,10 @@
  * part is copied from `t` at the start of every line, the vertical at the top of the frame or when
  * a second `$2006` write lands mid-frame — which is how a status bar is split off a scrolling
  * field. Timing is by whole scanlines; mid-line effects are out of scope. Not drawn: colour
- * emphasis, greyscale, the 8-sprite overflow flag.
+ * emphasis, greyscale. The 8-sprite overflow flag is `nes.ts`'s, which keeps sprite memory too.
  */
 
+import type { Mapper } from './mappers.ts';
 import type { Cartridge, PpuBus } from './nes.ts';
 import { NES_RGB } from './palette.ts';
 
@@ -37,6 +38,12 @@ export interface PpuSnapshot {
   nametables: Uint8Array;
   /** 8 KB of pattern tables as the PPU saw them. */
   chr: Uint8Array;
+  /**
+   * With a mapper that switches CHR (`Mapper.chrAt`): for each of the 240 lines, where in CHR ROM
+   * each of the eight 1 KB slots of $0000-$1FFF was while that line was drawn — `chr` is only the
+   * banks at the end of the frame, and a game may switch them halfway down the screen.
+   */
+  chrLines?: number[][];
   ctrl: number;
   mask: number;
 }
@@ -46,6 +53,13 @@ export class Ppu implements PpuBus {
   mask = 0;
   private readonly chr: Uint8Array;
   private readonly chrRam: boolean;
+  /** All of CHR ROM, for a mapper that switches banks of it (`Mapper.chrAt`). */
+  private readonly chrRom: Uint8Array;
+  private readonly mapper?: Mapper;
+  /** The mapper switches CHR ROM banks — the pattern tables are read through `Mapper.chrAt`. */
+  private readonly banked: boolean;
+  /** The CHR RAM of a board that has it beside CHR ROM (`Mapper.chrRamAt`). */
+  private readonly chrRamBanks = new Uint8Array(0x2000);
   private readonly vram = new Uint8Array(0x1000);
   readonly palette = new Uint8Array(32);
   readonly oam = new Uint8Array(256);
@@ -64,13 +78,26 @@ export class Ppu implements PpuBus {
   readonly indices = new Uint8Array(WIDTH * HEIGHT);
   readonly background = new Uint32Array(WIDTH * HEIGHT);
   readonly sprites = new Uint32Array(WIDTH * HEIGHT);
+  private readonly chrLines: number[][] = [];
   /** Opaque background under each pixel of the line being drawn, for sprite priority. */
   private readonly bgOpaque = new Uint8Array(WIDTH);
 
-  constructor(cart: Cartridge) {
+  /** `mapper`, when given, is asked which CHR banks and mirroring are in use, line by line. */
+  constructor(cart: Cartridge, mapper?: Mapper) {
     this.chrRam = cart.chr.length === 0;
     this.chr = this.chrRam ? new Uint8Array(0x2000) : cart.chr.slice(0, 0x2000);
+    this.chrRom = cart.chr;
     this.mirroring = cart.mirroring;
+    this.mapper = mapper;
+    this.banked = !this.chrRam && !!mapper?.chrAt;
+  }
+
+  /** A byte of the pattern tables, $0000-$1FFF, through the mapper's banks when it has them. */
+  private pattern(address: number): number {
+    if (!this.banked) return this.chr[address];
+    const ram = this.mapper!.chrRamAt?.(address) ?? -1;
+    if (ram >= 0) return this.chrRamBanks[ram];
+    return this.chrRom[this.mapper!.chrAt!(address) % this.chrRom.length];
   }
 
   /** The 8 KB CHR window, for a mapper that switches CHR banks to hand the PPU new ones. */
@@ -167,7 +194,11 @@ export class Ppu implements PpuBus {
         this.yReload = false;
       } else this.y = (this.y + 1) % 480;
     }
-    if (line < HEIGHT) this.drawLine(line);
+    if (line === 241) this.oamAddr = 0; // as vblank begins, as `nes.ts` does
+    if (line < HEIGHT) {
+      if (this.banked) this.chrLines[line] = Array.from({ length: 8 }, (_, slot) => this.mapper!.chrAt!(slot * 0x400));
+      this.drawLine(line);
+    }
   }
 
   snapshot(): PpuSnapshot {
@@ -182,7 +213,8 @@ export class Ppu implements PpuBus {
       palette: this.palette.map((value, i) => ((i & 0x13) === 0x10 ? this.palette[i & 0x0f] : value)),
       oam: this.oam.slice(),
       nametables,
-      chr: this.chr.slice(),
+      chr: this.banked ? Uint8Array.from({ length: 0x2000 }, (_, a) => this.pattern(a)) : this.chr.slice(),
+      ...(this.banked ? { chrLines: this.chrLines.map((banks) => banks.slice()) } : {}),
       ctrl: this.ctrl,
       mask: this.mask,
     };
@@ -197,9 +229,14 @@ export class Ppu implements PpuBus {
 
   /** Where logical nametable 0–3 lives in the 4 KB of VRAM kept. */
   private bank(n: number): number {
-    if (this.mirroring === 'vertical') return (n & 1) * 0x400;
-    if (this.mirroring === 'horizontal') return (n >> 1) * 0x400;
-    return n * 0x400;
+    // Four-screen boards wire the nametables themselves: the mapper's mirroring goes nowhere.
+    if (this.mirroring === 'four') return n * 0x400;
+    if (this.mapper?.nametableAt) return this.mapper.nametableAt(n) * 0x400;
+    const mirroring = this.mapper?.mirroring ?? this.mirroring;
+    if (mirroring === 'vertical') return (n & 1) * 0x400;
+    if (mirroring === 'horizontal') return (n >> 1) * 0x400;
+    if (mirroring === 'single0') return 0;
+    return 0x400; // single1
   }
 
   private paletteIndex(address: number): number {
@@ -211,6 +248,10 @@ export class Ppu implements PpuBus {
   private poke(address: number, value: number) {
     if (address < 0x2000) {
       if (this.chrRam) this.chr[address] = value;
+      else {
+        const ram = this.mapper?.chrRamAt?.(address) ?? -1;
+        if (ram >= 0) this.chrRamBanks[ram] = value;
+      }
     } else if (address < 0x3f00) {
       const n = (address >> 10) & 3;
       this.vram[this.bank(n) + (address & 0x3ff)] = value;
@@ -218,12 +259,13 @@ export class Ppu implements PpuBus {
   }
 
   private peek(address: number): number {
-    if (address < 0x2000) return this.chr[address];
+    if (address < 0x2000) return this.pattern(address);
     if (address < 0x3f00) return this.vram[this.bank((address >> 10) & 3) + (address & 0x3ff)];
     return this.palette[this.paletteIndex(address)];
   }
 
-  private spriteRow(tile: number, row: number, tall: boolean): [number, number] {
+  /** A sprite's two pattern bytes for a row; `drawn` tells the mapper the PPU fetched them. */
+  private spriteRow(tile: number, row: number, tall: boolean, drawn = false): [number, number] {
     let base: number;
     if (tall) {
       base = (tile & 1) * 0x1000 + (tile & 0xfe) * 16;
@@ -232,7 +274,9 @@ export class Ppu implements PpuBus {
         row -= 8;
       }
     } else base = (this.ctrl & 8 ? 0x1000 : 0) + tile * 16;
-    return [this.chr[base + row], this.chr[base + row + 8]];
+    const bytes: [number, number] = [this.pattern(base + row), this.pattern(base + row + 8)];
+    if (drawn) this.mapper?.fetched?.(base + row + 8);
+    return bytes;
   }
 
   private put(line: number, x: number, index: number) {
@@ -267,10 +311,11 @@ export class Ppu implements PpuBus {
       const attr = this.vram[nt + 0x3c0 + (ty >> 2) * 8 + (tx >> 2)];
       const group = (attr >> (((ty & 2) << 1) | (tx & 2))) & 3;
       const fy = wy % 240 & 7;
-      const lo = this.chr[patterns + tile * 16 + fy];
-      const hi = this.chr[patterns + tile * 16 + fy + 8];
+      const lo = this.pattern(patterns + tile * 16 + fy);
+      const hi = this.pattern(patterns + tile * 16 + fy + 8);
       const bit = 7 - (wx & 7);
       const colour = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1);
+      if (bit === 0) this.mapper?.fetched?.(patterns + tile * 16 + fy + 8); // the tile done: its fetch seen
       if (colour) {
         this.bgOpaque[x] = 1;
         this.put(line, x, this.palette[group * 4 + colour]);
@@ -291,7 +336,7 @@ export class Ppu implements PpuBus {
       const [y, tile, attr, sx] = this.oam.subarray(s * 4, s * 4 + 4);
       let row = line - (y + 1);
       if (attr & 0x80) row = h - 1 - row;
-      const [lo, hi] = this.spriteRow(tile, row, tall);
+      const [lo, hi] = this.spriteRow(tile, row, tall, true);
       for (let col = 0; col < 8; col++) {
         const x = sx + col;
         if (x >= WIDTH || drawn[x] || (x < 8 && !(this.mask & 0x04))) continue;

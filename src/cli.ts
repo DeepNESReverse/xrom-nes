@@ -35,6 +35,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { renderWrites } from '@xromdev/apu';
 import { basename, join } from 'node:path';
 import { BUTTON, CPU_HZ, Nes, parseRom } from './nes.ts';
+import { Ppu } from './ppu.ts';
 import { decode, type TimedWrite } from './decode.ts';
 import { detectGrid } from './grid.ts';
 import { writeCollection } from './collection.ts';
@@ -65,6 +66,8 @@ const presses = (opt('press') ?? '')
 
 const cart = parseRom(new Uint8Array(readFileSync(rom)));
 const nes = new Nes(cart);
+// A picture too: games that copy code or check data through $2007 (Saint Seiya, Mappy Kids) stall without one.
+nes.ppu = new Ppu(cart, nes.mapper);
 console.log(`${basename(rom)}: mapper ${cart.mapper} (${nes.mapper.name}), PRG ${cart.prg.length / 1024} KB`);
 
 // Run until the music has played `skip + seconds` past its first audible write,
@@ -136,7 +139,7 @@ if (fromBar > 0) {
   console.log(`bars from ${fromBar}, ${Number(opt('bars') ?? 1)} long: ticks ${startTick}..${endTick}, ${notes.length} notes`);
 }
 
-const out = opt('out') ?? join('/Users/alex.m/battletoads_mega_hack copy/battletoads-tools-next/public/tracks', slug, 'notes');
+const out = opt('out') ?? join(process.env.XROM_TRACKS ?? '/Users/alex.m/battletoads_mega_hack copy/battletoads-tools-next/public/tracks', slug, 'notes');
 const name = opt('name') ?? `${basename(rom).replace(/\s*\(.*$/, '').replace(/\.nes$/i, '')} — title`;
 const id = Number(opt('id') ?? 1);
 const meter = opt('meter');

@@ -9,12 +9,21 @@
     "typecheck": "tsc --noEmit -p .",
     "notes": "node --experimental-strip-types --no-warnings src/cli.ts",
     "nsf": "node --experimental-strip-types --no-warnings src/nsf-cli.ts",
-    "snap": "node --experimental-strip-types --no-warnings src/snap-cli.ts"
+    "probe-check": "node --experimental-strip-types --no-warnings src/probe-check.ts",
+    "agent": "node --experimental-strip-types --no-warnings src/agent-cli.ts",
+    "fceux-agent": "node --experimental-strip-types --no-warnings src/fceux-agent.ts",
+    "snap": "node --experimental-strip-types --no-warnings src/snap-cli.ts",
+    "sprites": "node --experimental-strip-types --no-warnings src/sprites-cli.ts",
+    "animations": "node --experimental-strip-types --no-warnings src/animations.ts",
+    "clips": "node --experimental-strip-types --no-warnings src/clips.ts",
+    "fceux-sprites": "node --experimental-strip-types --no-warnings src/fceux-sprites.ts",
+    "replay": "node --experimental-strip-types --no-warnings src/replay-cli.ts",
+    "complexity": "node --experimental-strip-types --no-warnings src/complexity/cli.ts"
   },
   "dependencies": {
-    "@xromdev/apu": "^0.1.1",
+    "@xromdev/apu": "^0.5.0",
     "@xromdev/cpu6502": "^0.1.0",
-    "@xromdev/nsf": "^0.1.0"
+    "@xromdev/nsf": "^0.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",
